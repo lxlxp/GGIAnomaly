@@ -16,28 +16,123 @@ st=[0]*28344
 st1=[0]*28344
 st2=[0]*28344
 st3=[0]*28344
+def reverse(list1):
+    return list(map(lambda x: -x, list1))
+def calc_seq(score, label, threshold, calc_latency=False):
+    """
+    Calculate f1 score for a score sequence
+    """
+    if calc_latency:
+        predict, latency = adjust_predicts(score, label, threshold, calc_latency=calc_latency)
+        t = list(calc_point2point(predict, label))
+        t.append(latency)
+        return t
+    else:
+        predict = adjust_predicts(score, label, threshold, calc_latency=calc_latency)
+        return calc_point2point(predict, label)
+def bf_search(score, label, start, end=None, step_num=1, display_freq=1, verbose=True):
+    """
+    Find the best-f1 score by searching best `threshold` in [`start`, `end`).
 
+
+    Returns:
+        list: list for results
+        float: the `threshold` for best-f1
+    """
+    if step_num is None or end is None:
+        end = start
+        step_num = 1
+    search_step, search_range, search_lower_bound = step_num, end - start, start
+    if verbose:
+        print("search range: ", search_lower_bound, search_lower_bound + search_range)
+    threshold = search_lower_bound
+    m = (-1., -1., -1.)
+    m_t = 0.0
+    for i in range(search_step):
+        threshold += search_range / float(search_step)
+        target = calc_seq(score, label, threshold, calc_latency=True)
+        if target[0] > m[0]:
+            m_t = threshold
+            m = target
+        if verbose and i % display_freq == 0:
+            print("cur thr: ", threshold, target, m, m_t)
+    print(m, m_t)
+    return m, m_t
+def calc_point2point(predict, actual):
+    """
+    calculate f1 score by predict and actual.
+
+    Args:
+        predict (np.ndarray): the predict label
+        actual (np.ndarray): np.ndarray
+    """
+    TP = np.sum(predict * actual)
+    TN = np.sum((1 - predict) * (1 - actual))
+    FP = np.sum(predict * (1 - actual))
+    FN = np.sum((1 - predict) * actual)
+    precision = TP / (TP + FP + 0.00001)
+    recall = TP / (TP + FN + 0.00001)
+    f1 = 2 * precision * recall / (precision + recall + 0.00001)
+    return f1, precision, recall, TP, TN, FP, FN
+def adjust_predicts(score, label,
+                    threshold=None,
+                    pred=None,
+                    calc_latency=False):
+    """
+    Calculate adjusted predict labels using given `score`, `threshold` (or given `pred`) and `label`.
+
+    Args:
+        score (np.ndarray): The anomaly score
+        label (np.ndarray): The ground-truth label
+        threshold (float): The threshold of anomaly score.
+            A point is labeled as "anomaly" if its score is lower than the threshold.
+        pred (np.ndarray or None): if not None, adjust `pred` and ignore `score` and `threshold`,
+        calc_latency (bool):
+
+    Returns:
+        np.ndarray: predict labels
+    """
+    if len(score) != len(label):
+        raise ValueError("score and label must have the same length")
+    score = np.asarray(score)
+    label = np.asarray(label)
+    latency = 0
+    if pred is None:
+        predict = score < threshold
+    else:
+        predict = pred
+    actual = label > 0.1
+    anomaly_state = False
+    anomaly_count = 0
+    for i in range(len(score)):
+        if actual[i] and predict[i] and not anomaly_state:
+                anomaly_state = True
+                anomaly_count += 1
+                for j in range(i, 0, -1):
+                    if not actual[j]:
+                        break
+                    else:
+                        if not predict[j]:
+                            predict[j] = True
+                            latency += 1
+        elif not actual[i]:
+            anomaly_state = False
+        if anomaly_state:
+            predict[i] = True
+    if calc_latency:
+        return predict, latency / (anomaly_count + 1e-4)
+    else:
+        return predict
 ty=df3[119:-16]
-#for i in range(0, 28344):
-    #if(ty[i]==1):
-        #print(",")
-        #print(i)
+
 
 for index in range(38):
     boxes = np.load('true.npy')
-
-    # boxes=np.ravel(boxes)
-
-    # print(X[1:3,1:3])
 
     #print(boxes.shape)
     boxes = boxes[:, :, index]
     #print(boxes.shape)
     boxes = np.ravel(boxes)
-
-    #print(len(boxes))
-
-    # np.savetxt('boxes.txt', boxes)
 
     boxes2 = np.load('pred.npy')
     # boxes2=np.ravel(boxes2)
@@ -61,14 +156,11 @@ for index in range(38):
     outlier_x = []
 
     ypre = []
-    #statistics = (pd.Series(boxes2.tolist())).describe()
-    #IQR = statistics.loc('max') - statistics.loc('min')
+
     IQR = boxes[np.argmax(boxes)] - boxes[np.argmin(boxes)]
-    #print("...")
-    #print(IQR)
+
     threshold1 = IQR/5
     for i in range(0, len(boxes2)):
-
 
         st[i]=st[i]+pow(abs(boxes2[i]-boxes[i]),2)
         if(index==2):
@@ -77,114 +169,30 @@ for index in range(38):
             st2[i] = st2[i] + abs(boxes2[i] - boxes[i])
         if (index == 13):
             st3[i] = st3[i] + abs(boxes2[i] - boxes[i])
-        #if (boxes[i] < threshold1) | (boxes[i] > threshold2):
+
         if (st[i] > threshold1 ):
-            #print(q1)
             outlier.append(boxes[i])
-            # outlier_x.append(data_x[i])
             outlier_x.append(x[i])
             ypre.append(1)
         else:
             ypre.append(0)
             continue
 
-
 dh['mse']=mse0
 dh['mae']=mae0
-#dh.to_csv("metric.csv")
-plt.cla()
-#plt.xticks(rotation=45)
-#plt.plot(x, st, '-', label="true")
 
-#plt.show()
+plt.cla()
+
 outlier1 = []  # 将异常值保存
 outlier_x1 = []
 ypre2 = [0]*28344
-for i in range(0, len(boxes2)):
 
-    if (st[i] > 0.5 ):
+t, th = bf_search(reverse(st), df3[96:-39],
+                                      start=-12,
+                                      end=12,
+                                      step_num=int(abs(1600) /
+                                                   1),
+                                      display_freq=50)
+print("best f1:",t[0])
+print("threshold:",th)
 
-
-
-
-
-        #ypre2.append(1)
-        if(i>40 and i<28430):
-            outlier1.append(st[i])
-            # outlier_x.append(data_x[i])
-            outlier_x1.append(x[i])
-            for j in range(0, 40):
-                ypre2[i + j] = 1
-                ypre2[i - j] = 1
-
-
-
-
-
-
-    else:
-        #ypre2.append(0)
-        continue
-num=f1_score(ypre2, df3[96:-39],average='macro')
-num1=recall_score(ypre2, df3[96:-39],average='macro')
-num2=precision_score(ypre2, df3[96:-39],average='macro')
-precisions, recalls, thresholds = precision_recall_curve(df3[119:-16],st )
-print(num)
-print(num1)
-print(num2)
-#(thresholds)
-f1_scores = (2 * precisions * recalls) / (precisions + recalls)
-th = thresholds[np.argmax(f1_scores[np.isfinite(f1_scores)])]
-#print('Best threshold: ', th)
-#print(f'best F1-score: {np.max(f1_scores[np.isfinite(f1_scores)])}')
-
-
-#plt.grid(None)
-#plt.plot(outlier_x1, outlier1, 'ro')
-plt.plot(x,st1,'-')
-
-#plt.tick_params(bottom=False,top=False,left=False,right=False)
-plt.legend()
-plt.grid(False)
-plt.xticks([])
-plt.yticks([])
-#plt.plot(x,st3,'-',color='g',label="anomaly score3")
-plt.savefig('ano.jpg',
-                dpi=400, bbox_inches='tight')
-plt.clf()
-plt.plot(x,st2,'-')
-#plt.show()
-
-#plt.tick_params(bottom=False,top=False,left=False,right=False)
-plt.legend()
-plt.grid(False)
-plt.xticks([])
-plt.yticks([])
-plt.savefig('ano2.jpg',
-                dpi=400, bbox_inches='tight')
-plt.clf()
-plt.plot(x,st3,'-')
-#plt.show()
-
-#plt.tick_params(bottom=False,top=False,left=False,right=False)
-plt.legend()
-plt.grid(False)
-plt.xticks([])
-plt.yticks([])
-plt.savefig('ano38.jpg',
-                dpi=400, bbox_inches='tight')
-
-plt.clf()
-plt.plot(x,st,'-')
-#plt.show()
-#plt.grid(None)
-plt.plot(outlier_x1, outlier1,'ro',linewidth=0.2,markersize='3')
-#plt.tick_params(bottom=False,top=False,left=False,right=False)
-plt.legend()
-plt.grid(False)
-plt.xticks([])
-plt.yticks([])
-plt.savefig('anototal.jpg',
-                dpi=400, bbox_inches='tight')
-#print(dt)
-dt.to_csv("spe.csv")
